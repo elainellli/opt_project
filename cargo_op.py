@@ -1,8 +1,11 @@
 import pandas as pd
-from gurobipy import *
+from gurobipy import Model, GRB, LinExpr
+
+from typing import Dict, Tuple
 
 def parse_data(input_file):
     df = pd.read_excel(input_file)
+    df.columns = df.columns.str.strip()
     days_map = {
         "Monday": 1,
         "Tuesday": 2,
@@ -128,6 +131,47 @@ def build_and_solve_model(L):
 
     return m, x, y, u, s
 
+def _days_columns():
+    return [("Monday", 1), ("Tuesday", 2), ("Wednesday", 3), ("Thursday", 4), ("Friday", 5)]
+
+def _var_arcs_to_dataframe(var_dict, arcs, days):
+    # Output format: origin, destination, Monday..Friday (same as data.xlsx)
+    rows = []
+    for (i, j) in arcs:
+        row = {"origin": i, "destination": j}
+        for day_name, t in _days_columns():
+            val = var_dict[i, j, t].X
+            row[day_name] = int(round(val))
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+def _var_airport_to_dataframe(var_dict, airports, days):
+    # Output format: airport, Monday..Friday
+    rows = []
+    for i in airports:
+        row = {"airport": i}
+        for day_name, t in _days_columns():
+            val = var_dict[i, t].X
+            row[day_name] = int(round(val))
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+def export_results_to_excel(output_file, x, y, u, s):
+    airports = ["A", "B", "C"]
+    days = [1, 2, 3, 4, 5]
+    arcs = [(i, j) for i in airports for j in airports if i != j]
+
+    df_x = _var_arcs_to_dataframe(x, arcs, days)
+    df_y = _var_arcs_to_dataframe(y, arcs, days)
+    df_u = _var_arcs_to_dataframe(u, arcs, days)
+    df_s = _var_airport_to_dataframe(s, airports, days)
+
+    with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
+        df_x.to_excel(writer, sheet_name="x_loaded", index=False)
+        df_y.to_excel(writer, sheet_name="y_empty", index=False)
+        df_u.to_excel(writer, sheet_name="u_backlog", index=False)
+        df_s.to_excel(writer, sheet_name="s_aircraft", index=False)
+
 def main():
     input_file = "data.xlsx"
     L = parse_data(input_file)
@@ -136,6 +180,25 @@ def main():
 
     if model.Status == GRB.OPTIMAL:
         print("Optimal objective value:", model.ObjVal)
+        export_results_to_excel("results.xlsx", x, y, u, s)
+        print("Wrote results to results.xlsx")
+        print("Optimal values for x (loaded cargo):")
+        for key in x.keys():
+            if x[key].X > 0:
+                print(f"x{key} = {x[key].X}")
+        print("Optimal values for y (empty repositioning):")
+        for key in y.keys():
+            if y[key].X > 0:
+                print(f"y{key} = {y[key].X}")
+        print("Optimal values for u (held cargo):")
+        for key in u.keys():
+            if u[key].X > 0:
+                print(f"u{key} = {u[key].X}")
+        print("Optimal values for s (aircraft stationed):")
+        for key in s.keys():
+            if s[key].X > 0:
+                print(f"s{key} = {s[key].X}")
+
 
 
 if __name__ == "__main__":
